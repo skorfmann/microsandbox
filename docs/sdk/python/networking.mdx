@@ -124,12 +124,12 @@ Sandbox-wide action when a secret placeholder reaches a disallowed host
 
 `HttpConfig | None` · Default: `None`
 
-HTTP denial response settings. `HttpConfig(deny_message="Blocked: {host}")` replaces the response body. `{host}` names the blocked hostname. A `None` message uses the default; an empty string sends no body. Requires a supporting local runtime; cloud rejects custom messages.
+Denial responses are disabled by default. Set `HttpConfig(deny_response=True)` to enable readable `403` responses. Optionally set `deny_message` to customize the body; `{host}` names the blocked hostname. Setting a message alone does not enable responses. When enabled, `None` uses the built-in message and an empty string sends no body. Requires a supporting local runtime; cloud rejects enabling it.
 
 ```python
 from microsandbox import HttpConfig, Network
 
-network = Network(http=HttpConfig(deny_message="Blocked: {host}"))
+network = Network(http=HttpConfig(deny_response=True, deny_message="Blocked: {host}"))
 ```
 
 #### <span className="msb-recv">Network.</span><span className="msb-hn">none()</span>

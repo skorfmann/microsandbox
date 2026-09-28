@@ -592,8 +592,8 @@ fn reject_dropped_cloud_create_fields(config: &SandboxConfig) -> MicrosandboxRes
     if config.spec.network.rate_limiter.is_some() {
         return Err(unsupported("network.rate_limiter"));
     }
-    if config.spec.network.http.deny_message.is_some() {
-        return Err(unsupported("network.http.deny_message (local-only)"));
+    if config.spec.network.http.deny_response {
+        return Err(unsupported("network.http.deny_response (local-only)"));
     }
     if config.spec.network.outbound_proxy.is_some() {
         return Err(unsupported("network.outbound_proxy"));
@@ -953,7 +953,7 @@ mod tests {
 
     #[cfg(feature = "net")]
     #[tokio::test]
-    async fn custom_http_deny_message_is_rejected_before_cloud_http() {
+    async fn http_deny_response_is_rejected_before_cloud_http() {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let backend = CloudBackend::builder()
             .url(format!("http://{}", listener.local_addr().unwrap()))
@@ -963,7 +963,7 @@ mod tests {
         let error = crate::backend::with_backend(backend, async {
             SandboxBuilder::new("http-deny-cloud")
                 .image("alpine")
-                .network(|network| network.http(|h| h.deny_message("blocked {host}")))
+                .network(|network| network.http(|h| h.deny_response(true)))
                 .create()
                 .await
                 .err()
@@ -976,7 +976,7 @@ mod tests {
                 error,
                 MicrosandboxError::Unsupported {
                     reason: UnsupportedReason::ConfigField(
-                        "network.http.deny_message (local-only)"
+                        "network.http.deny_response (local-only)"
                     ),
                     ..
                 }
@@ -988,10 +988,12 @@ mod tests {
                 .await
                 .is_err()
         );
-        for message in ["", "blocked {host}"] {
+        for message in [None, Some(""), Some("blocked {host}")] {
             let mut config = base_cloud_config();
-            config.spec.network.http.deny_message = Some(message.to_owned());
-            assert_unsupported_config_field(config, "network.http.deny_message (local-only)");
+            config.spec.network.http.deny_message = message.map(str::to_owned);
+            reject_dropped_cloud_create_fields(&config).unwrap();
+            config.spec.network.http.deny_response = true;
+            assert_unsupported_config_field(config, "network.http.deny_response (local-only)");
         }
     }
 

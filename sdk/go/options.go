@@ -1205,7 +1205,9 @@ type NetworkConfig struct {
 
 // HTTPConfig configures HTTP denial responses.
 type HTTPConfig struct {
-	// DenyMessage replaces the body for denied HTTP/HTTPS requests.
+	// DenyResponse enables readable HTTP denial responses. Default: false.
+	DenyResponse bool
+	// DenyMessage replaces the body when DenyResponse is enabled.
 	// "{host}" names the blocked host. Empty uses the default message.
 	DenyMessage string
 }

@@ -58,7 +58,7 @@ pub struct LaunchCapabilities {
     /// Older probes omit this feature; ordinary protocol-2 launches are unchanged.
     #[serde(default)]
     pub required_restore_backing: bool,
-    /// Custom HTTP denial response bodies are honored by the runtime.
+    /// Readable HTTP denial responses and custom bodies are supported by the runtime.
     /// Older runtimes omit this capability.
     #[serde(default)]
     pub http_deny_message: bool,

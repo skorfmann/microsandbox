@@ -1750,8 +1750,14 @@ class VsockRoute:
 class HttpConfig:
     """HTTP denial response settings. ``{host}`` names the blocked host."""
 
+    deny_response: bool = False
+    """Enable readable HTTP denial responses. Disabled by default."""
+
     deny_message: str | None = None
-    """Custom body; ``None`` uses the default and an empty string sends no body."""
+    """Body used when deny_response is enabled.
+
+    ``None`` uses the built-in message; an empty string sends no body.
+    """
 
 
 @dataclass(frozen=True, slots=True)
@@ -1869,10 +1875,13 @@ class Network:
         if self.http is not None:
             if not isinstance(self.http, HttpConfig):
                 raise TypeError("Network.http must be HttpConfig or None")
+            if not isinstance(self.http.deny_response, bool):
+                raise TypeError("HttpConfig.deny_response must be a bool")
+            d["http"] = {"deny_response": self.http.deny_response}
             if self.http.deny_message is not None:
                 if not isinstance(self.http.deny_message, str):
                     raise TypeError("HttpConfig.deny_message must be a str or None")
-                d["http"] = {"deny_message": self.http.deny_message}
+                d["http"]["deny_message"] = self.http.deny_message
         return d
 
 
