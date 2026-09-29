@@ -372,6 +372,49 @@ msb snap restore worker:snap --name rebooted --disk-only
 
 Snapshots with a tmpfs root cannot be restored disk-only.
 
+### Keep the guest clock
+
+By default the host keeps the guest wall clock in step with its own. It sets the guest clock at boot and about once a minute, and steps it forward to host time when a full snapshot restores or a paused sandbox resumes. A restored child therefore sees the host's current time, not the time it was captured at.
+
+Turn this off when children must share one timeline, for example when a full snapshot serves as a test fixture pinned to a fixed date. With `off`, the host never sets the guest clock after boot: each child resumes at the captured guest time and advances from there. The guest's monotonic clock continues from the snapshot either way.
+
+<CodeGroup>
+```rust Rust
+use microsandbox::sandbox::GuestClockPolicy;
+
+let source = Sandbox::builder("worker")
+    .image("alpine")
+    .guest_clock(GuestClockPolicy::Off)
+    .create()
+    .await?;
+```
+
+```bash CLI
+msb create alpine --name worker --guest-clock off
+```
+</CodeGroup>
+
+A full snapshot of that sandbox records `off`, and every restore keeps it unless it sets a policy. Pass `sync` on restore to step a child to host time, or `off` to keep the captured time from a snapshot taken with the default:
+
+<CodeGroup>
+```rust Rust
+let child = Sandbox::restore("worker:snap")
+    .name("child")
+    .guest_clock(GuestClockPolicy::Sync)
+    .restore()
+    .await?;
+```
+
+```bash CLI
+msb snap restore worker:snap --name child --guest-clock sync
+```
+</CodeGroup>
+
+- **Scope:** `off` stops only host-driven changes. Guest processes with the right privileges, such as `date -s`, can still set the clock.
+- **Drift:** With `off`, the guest clock is not corrected after the host sleeps or its clock changes.
+- **Branches:** Branches keep the source sandbox's policy.
+- **Compatibility:** Runtimes that predate this option reject `off` with an upgrade error. Local-only; the cloud backend rejects `off`.
+
 <a id="guest-filesystem-flush"></a>
 
 ### Guest flushing

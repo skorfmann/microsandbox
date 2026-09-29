@@ -297,6 +297,7 @@ fn main() {
                     required_restore_backing: true,
                     tcp_accept_queue_size: true,
                     http_deny_message: cfg!(feature = "net"),
+                    guest_clock: true,
                 })
                 .expect("serialize capabilities")
             );
