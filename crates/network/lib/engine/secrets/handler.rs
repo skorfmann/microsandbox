@@ -1711,7 +1711,7 @@ impl SecretsHandler {
                 match_form = %report.match_form,
                 guest_dst = %guest_dst,
                 http2_stream_id = %http2_stream_id,
-                "secret violation: placeholder detected for disallowed host"
+                "secret violation: placeholder detected where substitution or passthrough is not permitted"
             ),
             BlockingAction::BlockAndTerminate => tracing::error!(
                 action = %report.action,
@@ -1726,7 +1726,7 @@ impl SecretsHandler {
                 match_form = %report.match_form,
                 guest_dst = %guest_dst,
                 http2_stream_id = %http2_stream_id,
-                "secret violation: placeholder detected for disallowed host - terminating"
+                "secret violation: placeholder detected where substitution or passthrough is not permitted - terminating"
             ),
         }
     }
