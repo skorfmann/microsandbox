@@ -974,6 +974,12 @@ async fn inbound_relay_task(
                     }
                 }
             }
+
+            // The poll loop dropped the relay (e.g. guest reset), so the
+            // guest connection is gone. Stop waiting on an idle host.
+            _ = async { from_host_tx.as_ref().unwrap().closed().await }, if from_host_tx.is_some() => {
+                break;
+            }
         }
     }
 
@@ -1200,7 +1206,8 @@ mod tests {
             buf
         }
 
-        /// Wait until the relay is gone and only the guest socket remains.
+        /// Wait until the relay and its task are gone and only the guest socket
+        /// remains.
         async fn assert_relays_cleaned_up(&mut self) {
             self.run_until("publisher to drop the relay", CLEANUP_STEPS, |h| {
                 h.publisher.connections.is_empty()
@@ -1211,6 +1218,12 @@ mod tests {
                 1,
                 "only the guest socket should remain"
             );
+            // Each relay task holds a clone of the shared state; the count
+            // drops back to one only once the task has returned.
+            self.run_until("relay task to exit", PROMPT_STEPS, |h| {
+                Arc::strong_count(&h.shared) == 1
+            })
+            .await;
         }
     }
 
@@ -1351,6 +1364,20 @@ mod tests {
         assert_eq!(reader.await.unwrap(), b"response");
 
         h.assert_relays_cleaned_up().await;
+    }
+
+    /// A guest reset drops the relay without a FIN. The relay task must end
+    /// even while the host client stays idle, instead of waiting on host
+    /// input forever.
+    #[tokio::test]
+    async fn guest_reset_ends_relay_while_host_idle() {
+        let mut h = Harness::new();
+        let client = h.connect_host().await;
+        h.wait_for_guest_accept().await;
+
+        h.guest().abort();
+        h.assert_relays_cleaned_up().await;
+        drop(client);
     }
 
     #[tokio::test]
