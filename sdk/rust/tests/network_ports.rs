@@ -18,8 +18,7 @@ use tokio::net::{TcpListener, TcpStream, UdpSocket};
 const UDP_ECHO_LOG_PATH: &str = "/tmp/udp-echo.log";
 const UDP_ECHO_READY_PATH: &str = "/tmp/udp-echo.ready";
 
-/// Close-delimited HTTP/1.0 response (no `Content-Length`): the body ends
-/// when the guest closes the connection.
+/// No Content-Length: the client must receive EOF to finish reading.
 const CLOSE_DELIMITED_RESPONSE: &[u8] = b"HTTP/1.0 200 OK\r\n\r\nhi";
 
 //--------------------------------------------------------------------------------------------------
@@ -116,8 +115,7 @@ async fn udp_published_port_round_trips() {
     );
 }
 
-/// Regression test for #1705: when the guest closes a published TCP
-/// connection, the host client must see EOF instead of hanging.
+/// Regression for #1705: close-delimited HTTP must deliver EOF.
 #[msb_test]
 async fn tcp_published_port_delivers_guest_close_to_host() {
     let name = "network-ports-tcp-guest-close";

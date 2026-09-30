@@ -134,19 +134,11 @@ const DEFERRED_CLOSE_LIMIT: u16 = 64;
 /// A single inbound connection relay (host socket ↔ smoltcp socket).
 struct InboundRelay {
     handle: SocketHandle,
-    /// Send data from smoltcp socket to host relay task.
-    ///
-    /// Set to `None` once the guest half-closes (FIN) and all its data has
-    /// been relayed: dropping the sender makes the relay task's
-    /// `to_host_rx.recv()` return `None`, so it shuts down the write side of
-    /// the host stream while the host → guest direction stays open.
+    /// Sends guest data to the host. Dropped after guest FIN and buffered data drain.
     to_host: Option<mpsc::Sender<Bytes>>,
     /// Data removed from smoltcp while the host relay channel was full.
     read_buf: Option<Bytes>,
-    /// Receive data from host relay task to write to smoltcp socket.
-    ///
-    /// The relay task drops its sender when the host half-closes, or when it
-    /// exits.
+    /// Receives host data. Sender closure signals host EOF or relay task exit.
     from_host: mpsc::Receiver<Bytes>,
     /// Partial data that couldn't be fully written to smoltcp socket.
     write_buf: Option<(Bytes, usize)>,
@@ -311,10 +303,7 @@ impl PortPublisher {
             // Detect relay task exit — close the smoltcp socket.
             let relay_exited = match &relay.to_host {
                 Some(to_host) => to_host.is_closed(),
-                // The guest already half-closed (sender dropped below), so
-                // relay exit is detected on the other channel instead: the
-                // relay task drops its `from_host` sender on host EOF, which
-                // ends the task once the guest has closed, or when it returns.
+                // After guest FIN, use the remaining channel to detect host EOF or task exit.
                 None => relay.from_host.is_closed(),
             };
             if relay_exited {
@@ -355,14 +344,8 @@ impl PortPublisher {
                     }
                 }
 
-                // Guest half-close: the guest sent a FIN and everything it
-                // sent has been relayed. Drop the sender so the relay task
-                // sees EOF and shuts down the write side of the host stream.
-                // The host → guest direction stays open; the socket is
-                // closed once the relay task exits (see `relay_exited`
-                // above). CLOSE-WAIT covers a guest that closes first; the
-                // other states cover a guest FIN that arrives after the
-                // host half-closed and the socket already sent its own FIN.
+                // CLOSE-WAIT covers guest-first FIN; the other states cover FIN
+                // after the host half-closes. Forward EOF only after draining guest data.
                 if matches!(
                     socket.state(),
                     tcp::State::CloseWait
@@ -379,12 +362,8 @@ impl PortPublisher {
             // host → smoltcp: write pending data, then drain channel.
             write_host_data(socket, relay);
 
-            // Host half-close: the relay task dropped its sender after the
-            // host sent a FIN, and everything the host sent has been written
-            // to the socket. Close only the guest-bound direction; the
-            // guest → host direction stays open until the guest closes.
-            // Wait for the handshake first: closing in SYN-SENT would drop
-            // the connection instead of sending a FIN.
+            // Forward host EOF after draining its data and completing the handshake.
+            // Closing in SYN-SENT would drop the connection instead of sending FIN.
             if relay.from_host.is_closed()
                 && relay.from_host.is_empty()
                 && relay.write_buf.is_none()
@@ -900,13 +879,7 @@ fn try_send_to_host_relay(to_host: &mpsc::Sender<Bytes>, data: Bytes) -> Result<
     to_host.try_send(data).map_err(|err| err.into_inner())
 }
 
-/// Relay task: bridges a host TcpStream to channels connected to smoltcp.
-///
-/// Each direction half-closes on its own. When the guest side closes (the
-/// `to_host` sender is dropped), the host stream's write side is shut down
-/// so the host client sees EOF. When the host client half-closes, the
-/// `from_host` sender is dropped so the poll loop can send a FIN to the
-/// guest. The task returns once both directions are done or on error.
+/// Bridges a host TCP stream to smoltcp channels, closing each direction independently.
 async fn inbound_relay_task(
     stream: TcpStream,
     mut to_host_rx: mpsc::Receiver<Bytes>,
@@ -933,8 +906,6 @@ async fn inbound_relay_task(
                             break;
                         }
                     }
-                    // Guest half-closed (FIN): stop writing to the host but
-                    // keep relaying host → guest until the host closes.
                     None => {
                         guest_eof = true;
                         if tx.shutdown().await.is_err() || from_host_tx.is_none() {
@@ -947,9 +918,6 @@ async fn inbound_relay_task(
             // host → smoltcp: data from host client to write to guest.
             result = rx.read(&mut buf), if from_host_tx.is_some() => {
                 match result {
-                    // Host half-closed (FIN): drop the sender so the poll loop
-                    // closes the guest-bound direction, but keep relaying
-                    // guest → host until the guest closes.
                     Ok(0) => {
                         from_host_tx = None;
                         shared.proxy_wake.wake();
@@ -959,7 +927,6 @@ async fn inbound_relay_task(
                     }
                     Ok(n) => {
                         let data = Bytes::copy_from_slice(&buf[..n]);
-                        // The branch guard keeps the sender set here.
                         let Some(from_host_tx) = &from_host_tx else {
                             break;
                         };
@@ -1041,7 +1008,6 @@ mod tests {
 
     use super::*;
 
-    /// Guest port the loopback "guest" listens on.
     const TEST_GUEST_PORT: u16 = 8080;
 
     /// Simulated time each harness step advances the smoltcp clock.
@@ -1055,12 +1021,7 @@ mod tests {
     /// Step budget for relay cleanup, which may wait out TIME-WAIT.
     const CLEANUP_STEPS: usize = 2000;
 
-    /// Drives a [`PortPublisher`] against an in-process smoltcp interface.
-    ///
-    /// A loopback device stands in for the guest: one listening smoltcp
-    /// socket plays the guest service, and the publisher dials it exactly as
-    /// it would dial a real guest. The host side is a real tokio TCP
-    /// connection, so the relay task runs unchanged.
+    /// Exercises the real relay with a loopback smoltcp guest and a host TCP client.
     struct Harness {
         device: Loopback,
         iface: Interface,
@@ -1114,8 +1075,7 @@ mod tests {
             }
         }
 
-        /// Open a host TCP connection and queue it for the publisher, as the
-        /// published-port listener would. Returns the host client end.
+        /// Queues a connection for the publisher and returns the host client end.
         async fn connect_host(&mut self) -> TcpStream {
             let listener = TcpListener::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
                 .await
@@ -1152,7 +1112,6 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(1)).await;
         }
 
-        /// Step until `done` holds, panicking after `max_steps`.
         async fn run_until(
             &mut self,
             what: &str,
@@ -1172,7 +1131,6 @@ mod tests {
             self.sockets.get_mut::<tcp::Socket>(self.guest)
         }
 
-        /// Move everything the guest socket has received into `buf`.
         fn guest_recv(&mut self, buf: &mut Vec<u8>) {
             let guest = self.guest();
             while guest.can_recv() {
@@ -1195,7 +1153,6 @@ mod tests {
             .await;
         }
 
-        /// Read guest-bound bytes until the guest socket has seen the FIN.
         async fn guest_recv_to_eof(&mut self) -> Vec<u8> {
             let mut buf = Vec::new();
             self.run_until("guest to receive EOF", PROMPT_STEPS, |h| {
@@ -1206,8 +1163,6 @@ mod tests {
             buf
         }
 
-        /// Wait until the relay and its task are gone and only the guest socket
-        /// remains.
         async fn assert_relays_cleaned_up(&mut self) {
             self.run_until("publisher to drop the relay", CLEANUP_STEPS, |h| {
                 h.publisher.connections.is_empty()
@@ -1235,8 +1190,7 @@ mod tests {
         })
     }
 
-    /// Regression test for #1705: a close-delimited response (no
-    /// `Content-Length`) must reach the host client together with EOF.
+    /// Regression for #1705: close-delimited HTTP must deliver EOF.
     #[tokio::test]
     async fn guest_close_delivers_eof_to_host_client() {
         let mut h = Harness::new();
@@ -1366,9 +1320,6 @@ mod tests {
         h.assert_relays_cleaned_up().await;
     }
 
-    /// A guest reset drops the relay without a FIN. The relay task must end
-    /// even while the host client stays idle, instead of waiting on host
-    /// input forever.
     #[tokio::test]
     async fn guest_reset_ends_relay_while_host_idle() {
         let mut h = Harness::new();
