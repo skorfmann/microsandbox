@@ -67,6 +67,11 @@ pub struct LaunchCapabilities {
     /// Older runtimes omit this capability.
     #[serde(default)]
     pub http_deny_message: bool,
+
+    /// HTTP CONNECT outbound proxies are supported. Older runtimes omit this capability.
+    #[serde(default)]
+    pub http_connect_proxy: bool,
+
     /// The launch field `guest_clock` is honored by the runtime.
     /// Older runtimes omit this capability.
     #[serde(default)]
