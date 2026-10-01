@@ -1451,14 +1451,14 @@ Select the guest transparent huge-page policy applied through the kernel command
 fn guest_clock(self, policy: GuestClockPolicy) -> Self
 ```
 
-Select how the host manages the guest wall clock (`CLOCK_REALTIME`). Default: `GuestClockPolicy::Sync`, which sets the guest clock to host time at boot, about once a minute, and when a full snapshot restores or a paused sandbox resumes. `GuestClockPolicy::Off` leaves the guest clock alone after boot. Full snapshots record `Off`, and restores keep it unless they set a policy. Local-only; see [keep the guest clock](/sandboxes/snapshots#keep-the-guest-clock).
+Control whether the sandbox clock follows the host. Full snapshots save this setting; restores inherit it unless overridden. Local-only. See [guest clock](/sandboxes/snapshots#keep-the-guest-clock) for details.
 
 <p className="msb-label">Parameters</p>
 
 <div className="msb-params">
   <div className="msb-param">
     <div className="msb-param-key"><code>policy</code><span className="msb-type">GuestClockPolicy</span></div>
-    <div className="msb-param-desc"><code>Sync</code> or <code>Off</code>.</div>
+    <div className="msb-param-desc"><code>Sync</code> (default) follows host time; <code>Off</code> stops host clock updates after boot.</div>
   </div>
 </div>
 
