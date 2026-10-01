@@ -3,6 +3,7 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use clap::builder::{PossibleValuesParser, TypedValueParser};
 use clap::{Arg, ArgAction, ArgMatches, Args, Command, FromArgMatches};
 #[cfg(feature = "net")]
 use microsandbox::OutboundProxy;
@@ -149,8 +150,8 @@ pub struct SandboxOpts {
 
     /// Guest wall-clock policy: `sync` (default) keeps the guest clock in step with the
     /// host; `off` leaves it alone after boot, including across full snapshot restores.
-    #[arg(long = "guest-clock", value_name = "POLICY", value_parser = ["sync", "off"])]
-    pub guest_clock: Option<String>,
+    #[arg(long = "guest-clock", value_name = "POLICY", value_parser = guest_clock_parser())]
+    pub guest_clock: Option<GuestClockPolicy>,
 
     /// Mount a host path or named volume into the sandbox (`SOURCE:DEST[:OPTIONS]`).
     /// OPTIONS may include paired `uid=<N>,gid=<N>` for directory-backed mounts.
@@ -1323,10 +1324,7 @@ fn apply_sandbox_opts_inner(
             .map_err(anyhow::Error::msg)?;
         builder = builder.thp(policy);
     }
-    if let Some(ref guest_clock) = opts.guest_clock {
-        let policy = guest_clock
-            .parse::<GuestClockPolicy>()
-            .map_err(anyhow::Error::msg)?;
+    if let Some(policy) = opts.guest_clock {
         builder = builder.guest_clock(policy);
     }
     if let Some(ref workdir) = opts.workdir {
@@ -1485,6 +1483,11 @@ fn apply_sandbox_opts_inner(
     }
 
     Ok(builder)
+}
+
+/// Parse the clock policy at the CLI boundary while retaining possible values in help.
+pub(crate) fn guest_clock_parser() -> impl TypedValueParser<Value = GuestClockPolicy> {
+    PossibleValuesParser::new(["sync", "off"]).try_map(|value| value.parse::<GuestClockPolicy>())
 }
 
 /// Parse `HOST_PATH:PORT[/stream|/dgram]` without treating colons in the
@@ -3954,27 +3957,38 @@ mod tests {
 
     #[tokio::test]
     async fn apply_sandbox_opts_sets_guest_clock_policy() {
-        let config = apply_sandbox_opts(
-            SandboxBuilder::new("test").image("alpine"),
-            &SandboxOpts::default(),
-        )
-        .unwrap()
-        .build()
-        .await
-        .unwrap();
-        assert_eq!(config.spec.runtime.guest_clock, None);
+        for (args, expected) in [
+            (vec!["create"], None),
+            (
+                vec!["create", "--guest-clock", "sync"],
+                Some(GuestClockPolicy::Sync),
+            ),
+            (
+                vec!["create", "--guest-clock", "off"],
+                Some(GuestClockPolicy::Off),
+            ),
+        ] {
+            let matches = SandboxOpts::augment_args(Command::new("create"))
+                .try_get_matches_from(args)
+                .unwrap();
+            let opts = SandboxOpts::from_arg_matches(&matches).unwrap();
+            if expected.is_some() {
+                assert!(opts.has_creation_flags());
+            }
 
-        let opts = SandboxOpts {
-            guest_clock: Some("off".to_string()),
-            ..Default::default()
-        };
-        assert!(opts.has_creation_flags());
-        let config = apply_sandbox_opts(SandboxBuilder::new("test").image("alpine"), &opts)
-            .unwrap()
-            .build()
-            .await
-            .unwrap();
-        assert_eq!(config.spec.runtime.guest_clock, Some(GuestClockPolicy::Off));
+            let config = apply_sandbox_opts(SandboxBuilder::new("test").image("alpine"), &opts)
+                .unwrap()
+                .build()
+                .await
+                .unwrap();
+            assert_eq!(config.spec.runtime.guest_clock, expected);
+        }
+
+        assert!(
+            SandboxOpts::augment_args(Command::new("create"))
+                .try_get_matches_from(["create", "--guest-clock", "host"])
+                .is_err()
+        );
     }
 
     #[tokio::test]

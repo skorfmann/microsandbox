@@ -68,7 +68,7 @@ use tokio::sync::{Mutex, Semaphore, mpsc, oneshot, watch};
 use self::input_stall::{INPUT_STALL_TIMEOUT, InputStall};
 use super::workload_control::{WORKLOAD_CONTROL_ID, WorkloadControl};
 use crate::checkpoint::RestoredAgentState;
-use crate::clock::{RestoreActivation, spawn_clock_sync_task};
+use crate::clock::{RestoreActivationMode, spawn_clock_sync_task};
 use crate::console::ConsoleSharedState;
 use crate::exec_log::{LogSource, LogWriter};
 use crate::{RuntimeError, RuntimeResult};
@@ -1532,14 +1532,14 @@ impl AgentRelay {
         let generation_install_started = Instant::now();
         // With the guest clock off, publish only the new identity so the restored guest
         // continues from its captured wall clock instead of stepping to host time.
-        let activation = RestoreActivation::for_policy(self.guest_clock);
+        let activation = RestoreActivationMode::for_policy(self.guest_clock);
         let request = activation
             .install(vm, generation_bytes.into())
             .ok_or_else(|| {
-                RuntimeError::Custom(match activation {
-                    RestoreActivation::IdentityAndClock => "restored kernel lacks identity-and-clock activation; recreate this development full snapshot with the updated kernel or use disk-only restore",
-                    RestoreActivation::IdentityOnly => "restored kernel lacks VM Generation ID activation; recreate this development full snapshot with the updated kernel or use disk-only restore",
-                }.into())
+                RuntimeError::Custom(format!(
+                    "restored kernel lacks {}; recreate this development full snapshot with the updated kernel or use disk-only restore",
+                    activation.description(),
+                ))
             })?;
         let generation_install_us = generation_install_started.elapsed().as_micros();
         let resume_started = Instant::now();
@@ -1552,10 +1552,10 @@ impl AgentRelay {
         match vm.wait_vm_generation_processed(request, RESTORE_ACTIVATION_TIMEOUT) {
             Some(msb_krun::VmGenerationWaitOutcome::Processed) => {}
             Some(msb_krun::VmGenerationWaitOutcome::Failed) => {
-                return Err(RuntimeError::Custom(match activation {
-                    RestoreActivation::IdentityAndClock => "restored kernel rejected identity-and-clock activation; workloads remain frozen",
-                    RestoreActivation::IdentityOnly => "restored kernel rejected VM Generation ID activation; workloads remain frozen",
-                }.into()));
+                return Err(RuntimeError::Custom(format!(
+                    "restored kernel rejected {}; workloads remain frozen",
+                    activation.description(),
+                )));
             }
             Some(msb_krun::VmGenerationWaitOutcome::Superseded) => {
                 return Err(RuntimeError::Custom(
@@ -1574,7 +1574,7 @@ impl AgentRelay {
             }
         }
         let generation_ack_us = generation_ack_started.elapsed().as_micros();
-        self.kernel_clock_synchronized = activation == RestoreActivation::IdentityAndClock;
+        self.kernel_clock_synchronized = activation == RestoreActivationMode::IdentityAndClock;
 
         let ready_started = Instant::now();
         self.install_restored_ready(restored)?;

@@ -36,15 +36,18 @@ impl Manifest {
             self.requires.retain(|key| key != GUEST_CLOCK_EXTENSION);
             return Ok(());
         }
+
         self.extensions.insert(
             GUEST_CLOCK_EXTENSION.into(),
             serde_json::to_value(GuestClockExtension { policy })
                 .map_err(|error| SnapshotManifestError::ManifestParse(error.to_string()))?,
         );
+
         // An older reader must refuse rather than silently step a restored guest to host time.
         self.requires.push(GUEST_CLOCK_EXTENSION.into());
         self.requires.sort();
         self.requires.dedup();
+
         Ok(())
     }
 
@@ -53,10 +56,12 @@ impl Manifest {
         let Some(value) = self.extensions.get(GUEST_CLOCK_EXTENSION) else {
             return Ok(GuestClockPolicy::Sync);
         };
+
         let extension: GuestClockExtension =
             serde_json::from_value(value.clone()).map_err(|error| {
                 SnapshotManifestError::ManifestParse(format!("invalid guest clock policy: {error}"))
             })?;
+
         Ok(extension.policy)
     }
 }

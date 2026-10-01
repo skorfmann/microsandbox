@@ -413,7 +413,8 @@ msb snap restore worker:snap --name child --guest-clock sync
 - **Scope:** `off` stops only host-driven changes. Guest processes with the right privileges, such as `date -s`, can still set the clock.
 - **Drift:** With `off`, the guest clock is not corrected after the host sleeps or its clock changes.
 - **Forks:** Forks keep the source sandbox's policy.
-- **Compatibility:** Runtimes that predate this option reject `off` with an upgrade error. Older SDKs and CLIs refuse to restore a snapshot taken with `off`, whether installed or from an archive. They do not refuse to restart a stopped sandbox created with `off`: they drop the setting and sync the clock. Local-only; the cloud backend rejects `off`.
+- **Compatibility:** Runtimes that predate this option reject `off` with an upgrade error. Older SDKs and CLIs refuse to restore a full snapshot taken with `off`, whether installed or from an archive. Local-only; the cloud backend rejects `off`.
+- **Downgrades:** Older SDKs and CLIs require a database downgrade to reopen this installation. Downgrading is blocked while any sandbox's saved or active settings use `off`.
 
 <a id="guest-filesystem-flush"></a>
 

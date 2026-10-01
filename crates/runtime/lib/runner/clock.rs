@@ -31,7 +31,7 @@ const CLOCK_SYNC_WAKE_THRESHOLD: Duration = Duration::from_secs(6);
 
 /// Kernel request published before a restored full snapshot runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum RestoreActivation {
+pub(crate) enum RestoreActivationMode {
     /// Publish a new VM generation and step the guest wall clock to host time.
     IdentityAndClock,
     /// Publish a new VM generation only; the guest keeps its captured wall clock.
@@ -42,12 +42,20 @@ pub(crate) enum RestoreActivation {
 // Methods
 //--------------------------------------------------------------------------------------------------
 
-impl RestoreActivation {
+impl RestoreActivationMode {
     /// Select the restore activation for a guest clock policy.
     pub(crate) fn for_policy(policy: GuestClockPolicy) -> Self {
         match policy {
             GuestClockPolicy::Sync => Self::IdentityAndClock,
             GuestClockPolicy::Off => Self::IdentityOnly,
+        }
+    }
+
+    /// Describe the kernel activation required by this restore policy.
+    pub(crate) fn description(self) -> &'static str {
+        match self {
+            Self::IdentityAndClock => "identity-and-clock activation",
+            Self::IdentityOnly => "VM Generation ID activation",
         }
     }
 
@@ -166,12 +174,12 @@ mod tests {
     #[test]
     fn restore_activation_steps_the_clock_only_when_synchronizing() {
         assert_eq!(
-            RestoreActivation::for_policy(GuestClockPolicy::Sync),
-            RestoreActivation::IdentityAndClock
+            RestoreActivationMode::for_policy(GuestClockPolicy::Sync),
+            RestoreActivationMode::IdentityAndClock
         );
         assert_eq!(
-            RestoreActivation::for_policy(GuestClockPolicy::Off),
-            RestoreActivation::IdentityOnly
+            RestoreActivationMode::for_policy(GuestClockPolicy::Off),
+            RestoreActivationMode::IdentityOnly
         );
     }
 }
